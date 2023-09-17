@@ -9,19 +9,20 @@
 #include <Wire.h>
 #include <Servo.h>
 
-// Provide the token generation process info.
+/**
+ * RTDB Header add
+ */
 #include "addons/TokenHelper.h"
-// Provide the RTDB payload printing info and other helper functions.
 #include "addons/RTDBHelper.h"
 
-// Insert your network credentials
+/**
+ * =========================================
+ * Environtment Variabel
+ * =========================================
+ */
 #define WIFI_SSID "Galura_Digital"
 #define WIFI_PASSWORD "Riot_Room"
-
-// Insert Firebase project API Key
 #define API_KEY "AIzaSyD7o60j3E0p8nMSf_RLJ1dBiCaDfONhHxI"
-
-// Insert RTDB URLefine the RTDB URL */
 #define DATABASE_URL "https://finalprojectparking-default-rtdb.asia-southeast1.firebasedatabase.app/"
 
 LiquidCrystal_I2C lcd(PCF8574_ADDR_A21_A11_A01, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
@@ -38,11 +39,10 @@ byte customChar[8] = {
     0b00000};
 
 // Define Firebase Data object
-FirebaseData fbdo;
+FirebaseData fbdo, otp1Subs, otp2Subs, otpEnterSubs, booked1Subs, booked2Subs, frontGate, backGate, status1Subs, status2Subs, end1Subs, end2Subs;
 
 FirebaseAuth auth;
 FirebaseConfig config;
-FirebaseData slotsRef;
 
 bool signupOK = false;
 
@@ -75,63 +75,124 @@ const int STD_DISTANCE = 10;
 
 // Parking Slot
 
+/**
+ * Global Variabel
+ */
+int irVal_1; // Sensor IR 1
+int irVal_2; // Sensor IR 2
+
+/**
+ * =========================================
+ * Dinamik Variabel
+ * =========================================
+ */
 int slot;
-int irVal_1;
-int irVal_2;
 String otp_1;
 String otp_2;
-String entered_otp = "";
+String entered_otp;
+int booked_1;
+int booked_2;
+bool openFrontGate;
+bool openBackGate;
+String status_1;
+String status_2;
+int end_1;
+int end_2;
 
-const long setInterval = 1000;
-const long getInterval = 1000;
+unsigned long dataTxInterval = 5000;
+unsigned long time;
+unsigned long elapsedMillis = 0;
 
 void setup()
 {
     Serial.begin(9600);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print("Connecting to Wi-Fi");
-
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        Serial.print(".");
-        delay(300);
-    }
-
-    Serial.println();
-    Serial.print("Connected with IP: ");
-    Serial.println(WiFi.localIP());
-    Serial.println();
 
     /**
-     * RTDB Config
+     * =========================================
+     * Wifi Setup
+     * =========================================
+     */
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("[System] Connecting to Wi-Fi.\n");
+    unsigned long timer = millis();
+    int attempt = 0;
+    while (WiFi.status() != WL_CONNECTED)
+        if (millis() - elapsedMillis > dataTxInterval)
+        {
+            ++attempt;
+            elapsedMillis = 0;
+        }
+
+    Serial.printf("[Info] Connected with IP (%s) with %s attempt.\n", WiFi.localIP(), attempt);
+
+    /**
+     * =========================================
+     * RTDB Setup
+     * =========================================
      */
     config.api_key = API_KEY;
     config.database_url = DATABASE_URL;
 
-    Firebase.reconnectWiFi(true);
-
+    Serial.println("[System] Connecting to Firebase RTDB.\n");
     if (Firebase.signUp(&config, &auth, "", ""))
     {
-        Serial.println("ok");
+        Serial.printf("[Info] Connected to Firebase RTDB.\n");
         signupOK = true;
     }
     else
-        Serial.printf("%s\n", config.signer.signupError.message.c_str());
+        Serial.printf("[Error] Failed to Connect with Firebase RTDB: %s\n", config.signer.signupError.message);
 
     config.token_status_callback = tokenStatusCallback;
     Firebase.begin(&config, &auth);
+    Firebase.reconnectWiFi(true);
 
-    //  Ultrasonic PinMode
+    /**
+     * =========================================
+     * Data Subscriber Init
+     * =========================================
+     */
+    if (!Firebase.RTDB.beginStream(&otp1Subs, "Ultrasonic/Slot_A1/otp_1"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", otp1Subs.dataPath(), otp1Subs.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&otp2Subs, "Ultrasonic/Slot_A2/otp_2"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", otp2Subs.dataPath(), otp2Subs.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&otpEnterSubs, "entered_otp"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", otpEnterSubs.dataPath(), otpEnterSubs.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&booked1Subs, "Ultrasonic/Slot_A1/booked_1"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", booked1Subs.dataPath(), booked1Subs.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&booked2Subs, "Ultrasonic/Slot_A2/booked_2"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", booked2Subs.dataPath(), booked2Subs.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&frontGate, "Entering_Gates/Ir_Enter"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", frontGate.dataPath(), frontGate.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&backGate, "Exit_Gates/Ir_Exit"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", backGate.dataPath(), backGate.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&end1Subs, "Ultrasonic/Slot_A1/end_1"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", backGate.dataPath(), backGate.errorReason());
+
+    if (!Firebase.RTDB.beginStream(&end2Subs, "Ultrasonic/Slot_A1/end_2"))
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", backGate.dataPath(), backGate.errorReason());
+
+    /**
+     * =========================================
+     * Pin & Hardware Config
+     * =========================================
+     */
     pinMode(pingPin1, OUTPUT);
     pinMode(pingPin2, OUTPUT);
     pinMode(echoPin1, INPUT);
     pinMode(echoPin2, INPUT);
 
-    //  IR Sensor PinMode
+    // IR PIN
     pinMode(ir1, INPUT);
     pinMode(ir2, INPUT);
 
-    // Servo
+    // Servo Config
     myservo.attach(servo);
     //  exitServo.attach(exitServoPin);
 
@@ -151,459 +212,103 @@ void setup()
     lcd.clear();
 }
 
-void ultrasonic_1()
-{
-    digitalWrite(pingPin1, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(pingPin1, LOW);
-
-    duration_us1 = pulseIn(echoPin1, HIGH);
-
-    distance_cm1 = 0.017 * duration_us1;
-
-    String status1;
-    int booked_1;
-
-    if (Firebase.ready() && signupOK)
-    {
-        unsigned long setFlow = millis();
-        unsigned long getFlow = millis();
-        unsigned long setFlowPrev = 0;
-        unsigned long getFlowPrev = 0;
-
-        if (setFlow - setFlowPrev <= setInterval || setFlowPrev == 0)
-        {
-            if (Firebase.RTDB.setFloat(&fbdo, "Ultrasonic/Slot_A1/distance", distance_cm1))
-            {
-                //      Serial.println("PASSED");
-                Serial.print("Slot A1");
-                Serial.println();
-                Serial.print("Distance: ");
-                Serial.println(distance_cm1);
-            }
-
-            else
-            {
-                Serial.println("FAILED");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            setFlowPrev = setFlow
-        }
-
-        if (getFlow - getFlowPrev >= getInterval)
-        {
-            if (Firebase.RTDB.getString(&slotsRef, "Ultrasonic/Slot_A1/otp_1"))
-            {
-                //      Serial.println("PASSED");
-                otp_1 = slotsRef.stringData();
-
-                Serial.println();
-                Serial.print("otp1: ");
-                Serial.println(otp_1);
-            }
-
-            else
-            {
-                Serial.println("FAILED");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (getFlow - getFlowPrev >= getInterval)
-        {
-            if (Firebase.RTDB.getInt(&slotsRef, "Ultrasonic/Slot_A1/booked_1"))
-            {
-                //      Serial.println("PASSED");
-                booked_1 = slotsRef.intData();
-
-                Serial.println();
-                Serial.print("booked_status_1: " + String(booked_1));
-            }
-
-            else
-            {
-                Serial.println("FAILED");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (booked_1 == 1)
-        {
-            if (distance_cm1 >= STD_DISTANCE)
-                status1 = "Fill";
-            else
-                status1 = "Booked";
-        }
-        else
-            status1 = "Empty";
-
-        if (setFlow - setFlowPrev <= setInterval)
-        {
-            if (Firebase.RTDB.setString(&fbdo, "Ultrasonic/Slot_A1/status", status1))
-            {
-                //      Serial.println("PASSED");
-                Serial.println();
-                Serial.print("Updated Status: ");
-                Serial.println(status1);
-            }
-
-            else
-            {
-                Serial.println("FAILED");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            setFlowPrev = setFlow
-        }
-
-        // Update LCD
-        lcd.setCursor(3, 1);
-        lcd.print("A1 :");
-        lcd.createChar(0, customChar);
-        lcd.setCursor(2, 2);
-        lcd.write((byte)0);
-        lcd.setCursor(3, 2);
-        lcd.print(status1);
-    }
-}
-
-void ultrasonic_2()
-{
-    digitalWrite(pingPin2, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(pingPin2, LOW);
-
-    duration_us2 = pulseIn(echoPin2, HIGH);
-
-    distance_cm2 = 0.017 * duration_us2;
-
-    String status2;
-    int booked_2;
-
-    if (Firebase.ready() && signupOK)
-    {
-        unsigned long setFlow = millis();
-        unsigned long getFlow = millis();
-        unsigned long setFlowPrev = 0;
-        unsigned long getFlowPrev = 0;
-
-        if (setFlow - setFlowPrev <= setInterval || setFlowPrev == 0)
-        {
-            if (Firebase.RTDB.setFloat(&fbdo, "Ultrasonic/Slot_A2/distance", distance_cm2))
-            {
-                //      Serial.println("PASSED");
-                Serial.print("Slot A2");
-                Serial.println();
-                Serial.print("Distance: ");
-                Serial.println(distance_cm2);
-            }
-            setFlowPrev = setFlow
-        }
-
-        if (getFlow - getFlowPrev >= getInterval || getInterval == 0)
-        {
-            if (Firebase.RTDB.getString(&slotsRef, "Ultrasonic/Slot_A2/otp_2"))
-            {
-                //      Serial.println("PASSED");
-                otp_2 = slotsRef.stringData();
-
-                Serial.println();
-                Serial.print("otp2: ");
-                Serial.println(otp_2);
-            }
-            else
-            {
-                Serial.println("FAILED");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (getFlow - getFlowPrev >= getInterval)
-        {
-            if (Firebase.RTDB.getInt(&slotsRef, "Ultrasonic/Slot_A2/booked_2"))
-            {
-                //      Serial.println("PASSED");
-                booked_2 = slotsRef.intData();
-
-                Serial.println();
-                Serial.print("booked_status_2: " + String(booked_2));
-            }
-
-            else
-            {
-                Serial.println("FAILED");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (booked_2 == 1)
-        {
-            if (distance_cm2 <= STD_DISTANCE)
-                status2 = "Fill";
-            else
-                status2 = "Booked";
-        }
-        else
-            status2 = "Empty";
-
-        if (setFlow - setFlowPrev <= setInterval)
-        {
-            if (Firebase.RTDB.setString(&fbdo, "Ultrasonic/Slot_A2/status", status2))
-            {
-                //      Serial.println("PASSED");
-                Serial.println();
-                Serial.print("Updated Status: ");
-                Serial.println(status2);
-            }
-            else
-            {
-                Serial.println("FAILED to update status");
-                Serial.println("REASON: " + fbdo.errorReason());
-            }
-            setFlowPrev = setFlow
-        }
-
-        //  Update LCD
-        lcd.setCursor(13, 1);
-        lcd.print("A2 :");
-        lcd.createChar(0, customChar);
-        lcd.setCursor(12, 2);
-        lcd.write((byte)0);
-        lcd.setCursor(13, 2);
-        lcd.print(status2);
-    }
-}
-
-void entering_gate()
-{
-
-    // Read deklarasi sensor IR
-    irVal_1 = digitalRead(ir1);
-
-    if (Firebase.ready() && signupOK)
-    {
-        unsigned long setFlow = millis();
-        unsigned long getFlow = millis();
-        unsigned long setFlowPrev = 0;
-        unsigned long getFlowPrev = 0;
-
-        if (getFlow - getFlowPrev >= getInterval || getInterval == 0)
-        {
-            if (Firebase.RTDB.getInt(&slotsRef, "Entering_Gates/Ir_Enter"))
-            {
-                Serial.print("Entered_Ir : ");
-                Serial.println(irVal_1);
-            }
-            else
-            {
-                Serial.println("Failed to update available slots.");
-                Serial.println("Reason: " + slotsRef.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (setFlow - setFlowPrev >= setInterval || setInterval == 0)
-        {
-            if (Firebase.RTDB.setInt(&slotsRef, "Entering_Gates/Ir_Realtime", irVal_1))
-            {
-                Serial.print("Ir_Realtime : ");
-                Serial.println(irVal_1);
-            }
-            else
-            {
-                Serial.println("Failed to update available slots.");
-                Serial.println("Reason: " + slotsRef.errorReason());
-            }
-            setFlowPrev = setFlow
-        }
-
-        if (slot == 0)
-        {
-            // Parking is full, do not open the gates
-            lcd.setCursor(0, 3);
-            lcd.print("Parking Full!");
-            delay(100);
-        }
-        else
-        {
-            if (getFlow - getFlowPrev >= getInterval)
-            {
-                Firebase.RTDB.getInt(&slotsRef, "Entering_Gates/Ir_Enter");
-                if (slotsRef.intData() == 0 && (otp_1 == entered_otp || otp_2 == entered_otp))
-                    myservo.write(0);
-                else
-                    myservo.write(180);
-
-                getFlowPrev = getFlow
-            }
-
-            lcd.clear();
-        }
-    }
-}
-
-void exit_gate()
-{
-    // Servo and Infrared Configuration
-    irVal_2 = digitalRead(ir2);
-    int end_1;
-    int end_2;
-
-    if (Firebase.ready() && signupOK)
-    {
-        unsigned long setFlow = millis();
-        unsigned long getFlow = millis();
-        unsigned long setFlowPrev = 0;
-        unsigned long getFlowPrev = 0;
-
-        if (getFlow - getFlowPrev >= getInterval || getFlowPrev == 0)
-        {
-
-            if (Firebase.RTDB.getInt(&slotsRef, "Ultrasonic/Slot_A1/end_1"))
-                end_1 = slotsRef.intData();
-            else
-            {
-                Serial.println("Failed to update end_1.");
-                Serial.println("Reason: " + fbdo.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (setFlow - setFlowPrev >= setInterval || setInterval == 0)
-        {
-            if (Firebase.RTDB.setInt(&slotsRef, "Exit_Gates/Ir_Realtime", irVal_2))
-            {
-                Serial.print("Ir_Realtime : ");
-                Serial.println(irVal_2);
-            }
-            else
-            {
-                Serial.println("Failed to update available slots.");
-                Serial.println("Reason: " + slotsRef.errorReason());
-            }
-            setFlowPrev = setFlow
-        }
-
-        if (getFlow - getFlowPrev >= getInterval)
-        {
-            if (Firebase.RTDB.getInt(&slotsRef, "Ultrasonic/Slot_A2/end_2"))
-                end_2 = slotsRef.intData();
-            else
-            {
-                Serial.println("Failed to update end_2.");
-                Serial.println("Reason: " + fbdo.errorReason());
-            }
-            getFlowPrev = getFlow
-        }
-
-        if (getFlow - getFlowPrev >= getInterval)
-        {
-
-            Firebase.RTDB.getInt(&slotsRef, "Exit_Gates/Ir_Exit");
-            if (slotsRef.intData() == 0 && (end_1 == 1 || end_2 == 1))
-            {
-                // Open the exit gate
-                myservo.write(0); // Open the exit gate
-                Serial.println("Exit gate opened.");
-            }
-            else
-                myservo.write(180);
-
-            getFlowPrev = getFlow
-        }
-
-        if (end_1 == 1)
-        {
-            if (setFlow - setFlowPrev >= setInterval)
-            {
-                // If end_1 is 1, set booked_1 to 0
-                if (Firebase.RTDB.setInt(&slotsRef, "Ultrasonic/Slot_A1/booked_1", 0))
-                    Serial.println("Slot A1 booked_1 set to 0.");
-                else
-                {
-                    Serial.println("Failed to update booked_1.");
-                    Serial.println("Reason: " + fbdo.errorReason());
-                }
-                setFlowPrev = setFlow
-            }
-        }
-
-        if (end_2 == 1)
-        {
-            if (setFlow - setFlowPrev >= setInterval)
-            {
-
-                if (Firebase.RTDB.setInt(&slotsRef, "Ultrasonic/Slot_A2/booked_2", 0))
-                    Serial.println("Slot A2 booked_2 set to 0.");
-                else
-                {
-                    Serial.println("Failed to update booked_2.");
-                    Serial.println("Reason: " + fbdo.errorReason());
-                }
-                setFlowPrev = setFlow
-            }
-            // If end_2 is 1, set booked_2 to 0
-        }
-    }
-}
-
-void updateSlotInfo(int availableSlots)
-{
-    if (Firebase.ready() && signupOK)
-    {
-        if (Firebase.RTDB.setInt(&slotsRef, "Parking_Slots/Remaining", availableSlots))
-        {
-            Serial.print("Available Slots: ");
-            Serial.println(availableSlots);
-        }
-        else
-        {
-            Serial.println("Failed to update available slots.");
-            Serial.println("Reason: " + slotsRef.errorReason());
-        }
-    }
-}
-
-void validate_otp()
-{
-    if (Firebase.ready() && signupOK)
-    {
-        if (Firebase.RTDB.getString(&slotsRef, "entered_otp"))
-        {
-            entered_otp = slotsRef.stringData();
-            Serial.print("Entered_Otp: ");
-            Serial.println(entered_otp);
-        }
-        else
-        {
-            Serial.println("Failed to update available slots.");
-            Serial.println("Reason: " + slotsRef.errorReason());
-        }
-    }
-}
-
 void loop()
 {
+    time = millis();
 
     if (distance_cm1 <= STD_DISTANCE && distance_cm2 <= STD_DISTANCE)
-    {
-        // Both slots are filled
         slot = 0; // Update slot count to indicate all slots occupied
-    }
     else if (distance_cm1 <= STD_DISTANCE || distance_cm2 <= STD_DISTANCE)
-    {
-        // One of the slots is filled, the other is empty
         slot = 1; // Update slot count to indicate 1 slot available
-    }
     else
-    {
-        // Both slots are empty
         slot = 2; // Update slot count to indicate 2 slots available
-    }
 
+    if (Firebase.ready() && signupOK)
+    {
+        if (!Firebase.RTDB.readStream(&otp1Subs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", otp1Subs.dataPath(), otp1Subs.errorReason());
+
+        if (!Firebase.RTDB.readStream(&otp2Subs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", otp2Subs.dataPath(), otp2Subs.errorReason());
+
+        if (!Firebase.RTDB.readStream(&otpEnterSubs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", otpEnterSubs.dataPath(), otpEnterSubs.errorReason());
+
+        if (otp1Subs.streamAvailable() || otp2Subs.streamAvailable() || otpEnterSubs.streamAvailable())
+        {
+            if (otp1Subs.dataType() == "string")
+                otp_1 = otp1Subs.stringData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'otp_1': %s (%s)\n", otp1Subs.dataPath(), otp1Subs.dataType(), otp1Subs.errorReason());
+
+            if (otp2Subs.dataType() == "string")
+                otp_2 = otp2Subs.stringData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'otp_2': %s (%s)\n", otp2Subs.dataPath(), otp2Subs.dataType(), otp2Subs.errorReason());
+
+            if (otpEnterSubs.dataType() == "string")
+                entered_otp = otpEnterSubs.stringData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'entered_otp': %s (%s)\n", otpEnterSubs.dataPath(), otpEnterSubs.dataType(), otpEnterSubs.errorReason());
+        }
+
+        if (!Firebase.RTDB.readStream(&booked1Subs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", booked1Subs.dataPath(), booked1Subs.errorReason());
+
+        if (!Firebase.RTDB.readStream(&booked2Subs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", booked2Subs.dataPath(), booked2Subs.errorReason());
+
+        if (booked1Subs.streamAvailable() || booked2Subs.streamAvailable())
+        {
+            if (booked1Subs.dataType() == "int")
+                booked_1 = booked1Subs.intData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_1': %s (%s)\n", booked1Subs.dataPath(), booked1Subs.dataType(), booked1Subs.errorReason());
+
+            if (booked2Subs.dataType() == "int")
+                booked_2 = booked2Subs.intData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_2': %s (%s)\n", booked2Subs.dataPath(), booked2Subs.dataType(), booked2Subs.errorReason());
+        }
+
+        if (!Firebase.RTDB.readStream(&frontGate))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", frontGate.dataPath(), frontGate.errorReason());
+
+        if (!Firebase.RTDB.beginStream(&backGate, "Exit_Gates/Ir_Sensor"))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", backGate.dataPath(), backGate.errorReason());
+
+        if (frontGate.streamAvailable() || backGate.streamAvailable())
+        {
+            if (booked1Subs.dataType() == "int")
+                openFrontGate = frontGate.intData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'openFrontGate': %s (%s)\n", frontGate.dataPath(), frontGate.dataType(), frontGate.errorReason());
+
+            if (booked2Subs.dataType() == "bool")
+                openBackGate = backGate.intData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'openBackGate': %s (%s)\n", backGate.dataPath(), backGate.dataType(), backGate.errorReason());
+        }
+
+        if (!Firebase.RTDB.readStream(&end1Subs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", end1Subs.dataPath(), end1Subs.errorReason());
+
+        if (!Firebase.RTDB.readStream(&end2Subs))
+            Serial.printf("[Error] Subcriber to (' %s ') has error: %s.\n", end2Subs.dataPath(), end2Subs.errorReason());
+
+        if (end1Subs.streamAvailable() || end2Subs.streamAvailable())
+        {
+            if (end1Subs.dataType() == "int")
+                booked_1 = end1Subs.intData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_1': %s (%s)\n", end1Subs.dataPath(), end1Subs.dataType(), end1Subs.errorReason());
+
+            if (end2Subs.dataType() == "int")
+                booked_2 = end2Subs.intData();
+            else
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_2': %s (%s)\n", end2Subs.dataPath(), end2Subs.dataType(), end2Subs.errorReason());
+        }
+    }
     updateSlotInfo(slot); // Update initial slot information
     entering_gate();
     ultrasonic_1();
@@ -617,7 +322,163 @@ void loop()
     lcd.print("|");
     lcd.setCursor(9, 2);
     lcd.print("|");
-    Serial.println("______________________________");
-    validate_otp();
-    Serial.println("______________________________");
+}
+
+void ultrasonic_1()
+{
+    /**
+     * Ultrasonic Prosedur
+     * 1. Konek ke PIN
+     * 2. Kalkulasi Distance dan Logicnya
+     * 3. Assign Value
+     * 4. Patch ke Database (hanya 'Book' => 'Fill' && 'Fill' -> 'Book)
+     * 5. Update LCD
+     */
+    String status;
+
+    digitalWrite(pingPin1, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(pingPin1, LOW);
+
+    duration_us1 = pulseIn(echoPin1, HIGH);
+    distance_cm1 = 0.017 * duration_us1;
+
+    if (booked_1 == 1 && distance_cm1 <= STD_DISTANCE)
+        status_1 = "Fill";
+    else
+        status_1 = "Booked";
+
+    if (Firebase.RTDB.setFloat(&fbdo, "Ultrasonic/Slot_A1/distance", distance_cm1))
+        Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), distance_cm1, fbdo.errorReason());
+    else
+        Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+
+    if (Firebase.RTDB.setString(&fbdo, "Ultrasonic/Slot_A1/status", status_1))
+        Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), status_1, fbdo.errorReason());
+    else
+        Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+
+    // Update LCD
+    lcd.setCursor(3, 1);
+    lcd.print("A1 :");
+    lcd.createChar(0, customChar);
+    lcd.setCursor(2, 2);
+    lcd.write((byte)0);
+    lcd.setCursor(3, 2);
+    lcd.print(status_1);
+}
+
+void ultrasonic_2()
+{
+    /**
+     * Ultrasonic Prosedur
+     * 1. Konek ke PIN
+     * 2. Kalkulasi Distance dan Logicnya
+     * 3. Assign Value
+     * 4. Patch ke Database (hanya 'Book' => 'Fill' && 'Fill' -> 'Book)
+     * 5. Update LCD
+     */
+    String status_2;
+
+    digitalWrite(pingPin2, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(pingPin2, LOW);
+
+    duration_us2 = pulseIn(echoPin2, HIGH);
+    distance_cm2 = 0.017 * duration_us2;
+
+    if (booked_2 == 1 && distance_cm2 <= STD_DISTANCE)
+        status_2 = "Fill";
+    else
+        status_2 = "Booked";
+
+    if (Firebase.RTDB.setFloat(&fbdo, "Ultrasonic/Slot_A2/distance", distance_cm2))
+        Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), distance_cm2, fbdo.errorReason());
+    else
+        Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+
+    if (Firebase.RTDB.setString(&fbdo, "Ultrasonic/Slot_A2/status", status_2))
+        Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), status_2, fbdo.errorReason());
+    else
+        Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+
+    //  Update LCD
+    lcd.setCursor(13, 1);
+    lcd.print("A2 :");
+    lcd.createChar(0, customChar);
+    lcd.setCursor(12, 2);
+    lcd.write((byte)0);
+    lcd.setCursor(13, 2);
+    lcd.print(status_2);
+}
+
+void entering_gate()
+{
+    irVal_1 = digitalRead(ir1);
+
+    if (Firebase.RTDB.setString(&fbdo, "Entering_Gates/Ir_Realtime", irVal_1))
+        Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), irVal_1, fbdo.errorReason());
+    else
+        Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+
+    if (openFrontGate == 0 && (otp_1 == entered_otp || otp_2 == entered_otp))
+        myservo.write(0);
+    else
+        myservo.write(180);
+
+    lcd.clear();
+}
+
+void exit_gate()
+{
+    // Servo and Infrared Configuration
+    irVal_2 = digitalRead(ir2);
+
+    if (end_1 == 1)
+    {
+
+        if (openBackGate == 0)
+        {
+            myservo.write(0);
+            Serial.printf("[System] Exit Gate opened.\n");
+        }
+        else
+        {
+            myservo.write(180);
+            Serial.printf("[System] Exit Gate opened.\n");
+        }
+    }
+
+    if (end_2 == 1)
+    {
+        if (openBackGate == 0)
+        {
+            myservo.write(0);
+            Serial.printf("[System] Exit Gate opened.\n");
+        }
+        else
+        {
+            myservo.write(180);
+            Serial.printf("[System] Exit Gate opened.\n");
+        }
+    }
+}
+
+void updateSlotInfo(int availableSlots)
+{
+
+    if (Firebase.RTDB.setIntAsync(&fbdo, "Parking_Slots/Remaining", availableSlots))
+    {
+        Serial.print("Available Slots: ");
+        Serial.println(availableSlots);
+    }
+    else
+        Serial.printf("Reason: %s", fbdo.errorReason());
+
+    if (slot == 0)
+    {
+        // Parking is full, do not open the gates
+        lcd.setCursor(0, 3);
+        lcd.print("Parking Full!");
+    }
 }
