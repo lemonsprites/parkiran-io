@@ -318,7 +318,7 @@ void loop()
 
         if (timer - elapsedMillis > dataTxInterval)
         {
-            if (Firebase.RTDB.setString(&fbdo, "Entering_Gates/Ir_Realtime", irVal_1))
+            if (Firebase.RTDB.setInt(&fbdo, "Entering_Gates/Ir_Realtime", irVal_1))
                 Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), irVal_1, fbdo.errorReason());
             else
                 Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
@@ -326,7 +326,7 @@ void loop()
 
         if (timer - elapsedMillis > dataTxInterval)
         {
-            if (Firebase.RTDB.setString(&fbdo, "Entering_Gates/Ir_Realtime", irVal_2))
+            if (Firebase.RTDB.setInt(&fbdo, "Entering_Gates/Ir_Realtime", irVal_2))
                 Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), irVal_2, fbdo.errorReason());
             else
                 Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
