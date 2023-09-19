@@ -100,8 +100,11 @@ int end_1;
 int end_2;
 
 unsigned long dataTxInterval = 5000;
-unsigned long time;
+unsigned long timer;
 unsigned long elapsedMillis = 0;
+
+unsigned long elapsedUltrasonic1 = 0;
+unsigned long elapsedUltrasonic2 = 0;
 
 void setup()
 {
@@ -120,10 +123,10 @@ void setup()
         if (millis() - elapsedMillis > dataTxInterval)
         {
             ++attempt;
-            elapsedMillis = 0;
+            elapsedMillis = timer;
         }
 
-    Serial.printf("[Info] Connected with IP (%s) with %s attempt.\n", WiFi.localIP(), attempt);
+    Serial.printf("[System] Connected with IP (%s) with %s attempt.\n", WiFi.localIP(), attempt);
 
     /**
      * =========================================
@@ -136,11 +139,11 @@ void setup()
     Serial.println("[System] Connecting to Firebase RTDB.\n");
     if (Firebase.signUp(&config, &auth, "", ""))
     {
-        Serial.printf("[Info] Connected to Firebase RTDB.\n");
+        Serial.printf("[System] Connected to Firebase RTDB.\n");
         signupOK = true;
     }
     else
-        Serial.printf("[Error] Failed to Connect with Firebase RTDB: %s\n", config.signer.signupError.message);
+        Serial.printf("[System] Failed to Connect with Firebase RTDB: %s\n", config.signer.signupError.message);
 
     config.token_status_callback = tokenStatusCallback;
     Firebase.begin(&config, &auth);
@@ -173,10 +176,10 @@ void setup()
         Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", backGate.dataPath(), backGate.errorReason());
 
     if (!Firebase.RTDB.beginStream(&end1Subs, "Ultrasonic/Slot_A1/end_1"))
-        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", backGate.dataPath(), backGate.errorReason());
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", end1Subs.dataPath(), end1Subs.errorReason());
 
     if (!Firebase.RTDB.beginStream(&end2Subs, "Ultrasonic/Slot_A1/end_2"))
-        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", backGate.dataPath(), backGate.errorReason());
+        Serial.printf("[Error] Failed Subscribing to (' %s '): %s\n", end2Subs.dataPath(), end2Subs.errorReason());
 
     /**
      * =========================================
@@ -214,7 +217,9 @@ void setup()
 
 void loop()
 {
-    time = millis();
+    timer = millis();
+    irVal_1 = digitalRead(ir1);
+    irVal_2 = digitalRead(ir2);
 
     if (distance_cm1 <= STD_DISTANCE && distance_cm2 <= STD_DISTANCE)
         slot = 0; // Update slot count to indicate all slots occupied
@@ -284,7 +289,7 @@ void loop()
             else
                 Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'openFrontGate': %s (%s)\n", frontGate.dataPath(), frontGate.dataType(), frontGate.errorReason());
 
-            if (booked2Subs.dataType() == "bool")
+            if (booked2Subs.dataType() == "int")
                 openBackGate = backGate.intData();
             else
                 Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'openBackGate': %s (%s)\n", backGate.dataPath(), backGate.dataType(), backGate.errorReason());
@@ -308,12 +313,36 @@ void loop()
             else
                 Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_2': %s (%s)\n", end2Subs.dataPath(), end2Subs.dataType(), end2Subs.errorReason());
         }
+
+        updateSlotInfo(slot); // Update initial slot information
+
+        if (timer - elapsedMillis > dataTxInterval)
+        {
+            if (Firebase.RTDB.setString(&fbdo, "Entering_Gates/Ir_Realtime", irVal_1))
+                Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), irVal_1, fbdo.errorReason());
+            else
+                Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+        }
+
+        if (timer - elapsedMillis > dataTxInterval)
+        {
+            if (Firebase.RTDB.setString(&fbdo, "Entering_Gates/Ir_Realtime", irVal_2))
+                Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), irVal_2, fbdo.errorReason());
+            else
+                Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
+        }
+
+        entering_gate();
+
+        if (timer - elapsedMillis > dataTxInterval)
+            ultrasonic_1();
+
+        if (timer - elapsedMillis > dataTxInterval)
+            ultrasonic_2();
+
+        exit_gate();
     }
-    updateSlotInfo(slot); // Update initial slot information
-    entering_gate();
-    ultrasonic_1();
-    ultrasonic_2();
-    exit_gate();
+
     lcd.setCursor(3, 0);
     lcd.print("Remaining : ");
     lcd.setCursor(16, 0);
@@ -322,6 +351,8 @@ void loop()
     lcd.print("|");
     lcd.setCursor(9, 2);
     lcd.print("|");
+
+    elapsedMillis = timer;
 }
 
 void ultrasonic_1()
@@ -334,10 +365,13 @@ void ultrasonic_1()
      * 4. Patch ke Database (hanya 'Book' => 'Fill' && 'Fill' -> 'Book)
      * 5. Update LCD
      */
-    String status;
 
-    digitalWrite(pingPin1, HIGH);
-    delayMicroseconds(10);
+    unsigned long localTimer = millis();
+
+    if (localTimer >= 100)
+        digitalWrite(pingPin1, HIGH);
+
+    elapsedUltrasonic1 = localTimer;
     digitalWrite(pingPin1, LOW);
 
     duration_us1 = pulseIn(echoPin1, HIGH);
@@ -378,10 +412,12 @@ void ultrasonic_2()
      * 4. Patch ke Database (hanya 'Book' => 'Fill' && 'Fill' -> 'Book)
      * 5. Update LCD
      */
-    String status_2;
+    unsigned long localTimer = millis();
 
-    digitalWrite(pingPin2, HIGH);
-    delayMicroseconds(10);
+    if (localTimer >= 100)
+        digitalWrite(pingPin1, HIGH);
+
+    elapsedUltrasonic2 = localTimer;
     digitalWrite(pingPin2, LOW);
 
     duration_us2 = pulseIn(echoPin2, HIGH);
@@ -414,13 +450,6 @@ void ultrasonic_2()
 
 void entering_gate()
 {
-    irVal_1 = digitalRead(ir1);
-
-    if (Firebase.RTDB.setString(&fbdo, "Entering_Gates/Ir_Realtime", irVal_1))
-        Serial.printf("[Info] Data has been set to (%s) with value: %s (%s)\n", fbdo.dataPath(), irVal_1, fbdo.errorReason());
-    else
-        Serial.printf("[Error] Data set has error occured on (%s) with value: %s\n", fbdo.dataPath(), fbdo.errorReason());
-
     if (openFrontGate == 0 && (otp_1 == entered_otp || otp_2 == entered_otp))
         myservo.write(0);
     else
@@ -431,36 +460,27 @@ void entering_gate()
 
 void exit_gate()
 {
-    // Servo and Infrared Configuration
-    irVal_2 = digitalRead(ir2);
-
-    if (end_1 == 1)
+    if ((end_1 == 1 && openBackGate == 0) || openFrontGate == 0)
     {
 
-        if (openBackGate == 0)
-        {
-            myservo.write(0);
-            Serial.printf("[System] Exit Gate opened.\n");
-        }
-        else
-        {
-            myservo.write(180);
-            Serial.printf("[System] Exit Gate opened.\n");
-        }
+        myservo.write(0);
+        Serial.printf("[System] Exit Gate opened.\n");
+    }
+    else
+    {
+        myservo.write(180);
+        Serial.printf("[System] Exit Gate closed.\n");
     }
 
-    if (end_2 == 1)
+    if ((end_2 == 1 && openBackGate == 0) || openBackGate == 0)
     {
-        if (openBackGate == 0)
-        {
-            myservo.write(0);
-            Serial.printf("[System] Exit Gate opened.\n");
-        }
-        else
-        {
-            myservo.write(180);
-            Serial.printf("[System] Exit Gate opened.\n");
-        }
+        myservo.write(0);
+        Serial.printf("[System] Exit Gate opened.\n");
+    }
+    else
+    {
+        myservo.write(180);
+        Serial.printf("[System] Exit Gate closed.\n");
     }
 }
 
@@ -468,17 +488,13 @@ void updateSlotInfo(int availableSlots)
 {
 
     if (Firebase.RTDB.setIntAsync(&fbdo, "Parking_Slots/Remaining", availableSlots))
-    {
-        Serial.print("Available Slots: ");
-        Serial.println(availableSlots);
-    }
+        Serial.printf("[System] Available Slots: %s\n", availableSlots);
     else
-        Serial.printf("Reason: %s", fbdo.errorReason());
+        Serial.printf("[Error] Error occured: %s", fbdo.errorReason());
 
     if (slot == 0)
     {
-        // Parking is full, do not open the gates
         lcd.setCursor(0, 3);
-        lcd.print("Parking Full!");
+        lcd.print("[System] Parking Full!");
     }
 }
