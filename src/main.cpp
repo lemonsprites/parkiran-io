@@ -304,14 +304,14 @@ void loop()
         if (end1Subs.streamAvailable() || end2Subs.streamAvailable())
         {
             if (end1Subs.dataType() == "int")
-                booked_1 = end1Subs.intData();
+                end_1 = end1Subs.intData();
             else
-                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_1': %s (%s)\n", end1Subs.dataPath(), end1Subs.dataType(), end1Subs.errorReason());
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'end_1': %s (%s)\n", end1Subs.dataPath(), end1Subs.dataType(), end1Subs.errorReason());
 
             if (end2Subs.dataType() == "int")
-                booked_2 = end2Subs.intData();
+                end_2 = end2Subs.intData();
             else
-                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'booked_2': %s (%s)\n", end2Subs.dataPath(), end2Subs.dataType(), end2Subs.errorReason());
+                Serial.printf("[Info] Data has been retrieve from (%s) and saved to 'end_2': %s (%s)\n", end2Subs.dataPath(), end2Subs.dataType(), end2Subs.errorReason());
         }
 
         updateSlotInfo(slot); // Update initial slot information
